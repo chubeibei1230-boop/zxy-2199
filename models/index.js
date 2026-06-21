@@ -11,7 +11,8 @@ const stores = {
   waves: () => getStore('waves'),
   pickingRecords: () => getStore('pickingRecords'),
   checkRecords: () => getStore('checkRecords'),
-  alerts: () => getStore('alerts')
+  alerts: () => getStore('alerts'),
+  waveSuspensions: () => getStore('waveSuspensions')
 };
 
 const newId = () => uuidv4().replace(/-/g, '');

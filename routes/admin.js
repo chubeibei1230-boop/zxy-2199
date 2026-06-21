@@ -3,7 +3,8 @@ const router = express.Router();
 const { requireAdmin, validateBody } = require('../middleware/auth');
 const { stores, newId } = require('../models');
 const { getConfig, setConfig, resolveAlert } = require('../utils/detector');
-const { ROLES, CONFIG_DEFAULTS } = require('../models/constants');
+const { suspendWave, resumeWave, getSuspensionList, getActiveSuspension, getWaveSuspensionTimeline } = require('../utils/suspension');
+const { ROLES, CONFIG_DEFAULTS, SUSPENSION_REASONS, SUSPENSION_STATUS } = require('../models/constants');
 
 const parsePagination = (req) => ({
   page: Math.max(1, parseInt(req.query.page) || 1),
@@ -299,6 +300,84 @@ router.post('/alerts/:id/resolve', requireAdmin, (req, res, next) => {
   try {
     const alert = resolveAlert(req.params.id);
     res.json({ data: alert });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/suspend', requireAdmin, validateBody({
+  reason: { required: true, minLength: 1 },
+  responsiblePerson: { required: true, minLength: 1 }
+}), (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const { reason, responsiblePerson, remark = '', expectedResumeAt = null } = req.body;
+    const result = suspendWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      reason,
+      responsiblePerson,
+      remark,
+      expectedResumeAt
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/resume', requireAdmin, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const { resumeRemark = '' } = req.body;
+    const result = resumeWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      resumeRemark
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/wave-suspensions', requireAdmin, (req, res, next) => {
+  try {
+    const { page, pageSize } = parsePagination(req);
+    const filters = {
+      waveId: req.query.waveId,
+      waveNo: req.query.waveNo,
+      status: req.query.status,
+      reason: req.query.reason,
+      responsiblePerson: req.query.responsiblePerson,
+      suspendedBy: req.query.suspendedBy,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    };
+    const result = getSuspensionList(filters, page, pageSize);
+    const usersStore = stores.users();
+    result.data.forEach(s => {
+      if (s.suspendedBy) {
+        const u = usersStore.findById(s.suspendedBy);
+        if (u) s.suspendedByUser = { id: u.id, username: u.username, realName: u.realName };
+      }
+      if (s.resumedBy) {
+        const u = usersStore.findById(s.resumedBy);
+        if (u) s.resumedByUser = { id: u.id, username: u.username, realName: u.realName };
+      }
+    });
+    res.json({ data: result.data, total: result.total, page, pageSize, totalPages: result.totalPages });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/suspension-timeline', requireAdmin, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const timeline = getWaveSuspensionTimeline(waveId);
+    const activeSuspension = getActiveSuspension(waveId);
+    res.json({ data: { timeline, activeSuspension } });
+  } catch (e) { next(e); }
+});
+
+router.get('/suspension-reasons', requireAdmin, (req, res, next) => {
+  try {
+    res.json({ data: SUSPENSION_REASONS });
   } catch (e) { next(e); }
 });
 

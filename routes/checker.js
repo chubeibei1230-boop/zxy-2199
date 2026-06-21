@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { requireChecker, requireAdmin, validateBody, authMiddleware } = require('../middleware/auth');
 const { stores, newId } = require('../models');
-const { WAVE_STATUS, WRONG_ITEM_REASONS, PACKING_SUGGESTIONS, DISCREPANCY_LEVEL } = require('../models/constants');
+const { WAVE_STATUS, WRONG_ITEM_REASONS, PACKING_SUGGESTIONS, DISCREPANCY_LEVEL, SUSPENSION_REASONS } = require('../models/constants');
 const { checkLocationDiscrepancyCluster, getConfig } = require('../utils/detector');
+const { suspendWave, resumeWave, canSuspendWave, canResumeWave, getActiveSuspension, getWaveSuspensionTimeline } = require('../utils/suspension');
 
 function calcDiscrepancyLevel(diffRatio) {
   const abs = Math.abs(diffRatio);
@@ -21,6 +22,9 @@ router.post('/waves/:id/start-checking', requireChecker, (req, res, next) => {
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法开始复核，请先恢复波次' });
+    }
     if (wave.status !== WAVE_STATUS.TO_CHECK && wave.status !== WAVE_STATUS.DISCREPANCY) {
       return res.status(400).json({ error: `当前波次状态为 ${wave.status}，只能从待复核或差异处理中开始` });
     }
@@ -57,6 +61,9 @@ router.post('/check-records', requireChecker, validateBody({
     const checkRecordsStore = stores.checkRecords();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法提交复核记录，请先恢复波次' });
+    }
     if (wave.status !== WAVE_STATUS.TO_CHECK && wave.status !== WAVE_STATUS.DISCREPANCY) {
       return res.status(400).json({ error: '波次不在可复核状态' });
     }
@@ -154,6 +161,11 @@ router.post('/check-records/:id/resolve-discrepancy', requireChecker, validateBo
     const store = stores.checkRecords();
     const rec = store.findById(req.params.id);
     if (!rec) return res.status(404).json({ error: '复核记录不存在' });
+    const waveStore = stores.waves();
+    const wave = waveStore.findById(rec.waveId);
+    if (wave && wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法处理差异，请先恢复波次' });
+    }
     if (!rec.hasDiscrepancy) return res.status(400).json({ error: '该记录无差异' });
     const updated = store.update(rec.id, {
       discrepancyResolved: true,
@@ -162,11 +174,9 @@ router.post('/check-records/:id/resolve-discrepancy', requireChecker, validateBo
       resolverId: req.user.id,
       resolvedAt: new Date().toISOString()
     });
-    const waveStore = stores.waves();
-    const wave = waveStore.findById(rec.waveId);
     const waveChecks = store.find({ waveId: rec.waveId });
     const allResolved = waveChecks.every(c => !c.hasDiscrepancy || c.discrepancyResolved);
-    if (allResolved && wave.status === WAVE_STATUS.DISCREPANCY) {
+    if (allResolved && wave && wave.status === WAVE_STATUS.DISCREPANCY) {
       waveStore.update(rec.waveId, { status: WAVE_STATUS.TO_PACK });
     }
     res.json({ data: updated });
@@ -179,6 +189,10 @@ router.post('/check-records/:id/confirm-packing', requireChecker, (req, res, nex
     const store = stores.checkRecords();
     const rec = store.findById(req.params.id);
     if (!rec) return res.status(404).json({ error: '复核记录不存在' });
+    const wave = stores.waves().findById(rec.waveId);
+    if (wave && wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法进行包装确认，请先恢复波次' });
+    }
     if (rec.hasDiscrepancy && !rec.discrepancyResolved) {
       return res.status(400).json({ error: '存在未解决的差异，无法进行包装确认' });
     }
@@ -200,6 +214,9 @@ router.post('/waves/:id/final-confirm', requireChecker, (req, res, next) => {
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法最终确认，请先恢复波次' });
+    }
     if (wave.status !== WAVE_STATUS.TO_PACK) {
       return res.status(400).json({ error: `当前状态为 ${wave.status}，只能从可包装状态最终确认` });
     }
@@ -244,6 +261,72 @@ router.get('/check-records/wave/:waveId', authMiddleware(), (req, res, next) => 
   try {
     const records = stores.checkRecords().find({ waveId: req.params.waveId });
     res.json({ data: records, total: records.length });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/suspend', requireChecker, validateBody({
+  reason: { required: true, minLength: 1 },
+  responsiblePerson: { required: true, minLength: 1 }
+}), (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const permission = canSuspendWave(wave, req.user.role, req.user.id);
+    if (!permission.allowed) {
+      return res.status(403).json({ error: permission.reason });
+    }
+    const { reason, responsiblePerson, remark = '', expectedResumeAt = null } = req.body;
+    const result = suspendWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      reason,
+      responsiblePerson,
+      remark,
+      expectedResumeAt
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/resume', requireChecker, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const permission = canResumeWave(wave, req.user.role, req.user.id);
+    if (!permission.allowed) {
+      return res.status(403).json({ error: permission.reason });
+    }
+    const { resumeRemark = '' } = req.body;
+    const result = resumeWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      resumeRemark
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/suspension-timeline', requireChecker, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.checkerId && wave.checkerId !== req.user.id) {
+      return res.status(403).json({ error: '只能查看自己负责的波次挂起记录' });
+    }
+    const timeline = getWaveSuspensionTimeline(waveId);
+    const activeSuspension = getActiveSuspension(waveId);
+    res.json({ data: { timeline, activeSuspension } });
+  } catch (e) { next(e); }
+});
+
+router.get('/suspension-reasons', requireChecker, (req, res, next) => {
+  try {
+    res.json({ data: SUSPENSION_REASONS });
   } catch (e) { next(e); }
 });
 

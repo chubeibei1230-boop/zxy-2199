@@ -7,7 +7,8 @@ const ALERT_TYPES = {
   LOCATION_DISCREPANCY_CLUSTER: 'LOCATION_DISCREPANCY_CLUSTER',
   REVIEW_TIMEOUT: 'REVIEW_TIMEOUT',
   STOCKOUT_NO_EXPLANATION: 'STOCKOUT_NO_EXPLANATION',
-  PACKING_CONFIRM_MISS: 'PACKING_CONFIRM_MISS'
+  PACKING_CONFIRM_MISS: 'PACKING_CONFIRM_MISS',
+  SUSPENSION_TIMEOUT: 'SUSPENSION_TIMEOUT'
 };
 
 function getConfig(key) {
@@ -166,10 +167,43 @@ function checkPackingConfirmationMiss() {
   return alerts;
 }
 
+function checkAllSuspensionTimeout() {
+  const { SUSPENSION_STATUS, CONFIG_DEFAULTS: cfg } = require('../models/constants');
+  const timeoutMinutes = getConfig('SUSPENSION_TIMEOUT_MINUTES') || cfg.SUSPENSION_TIMEOUT_MINUTES;
+  const suspensions = stores.waveSuspensions().find({
+    status: SUSPENSION_STATUS.ACTIVE
+  });
+  const alerts = [];
+  const now = new Date();
+  for (const s of suspensions) {
+    const suspendedMinutes = Math.round((now - new Date(s.suspendedAt)) / (1000 * 60));
+    if (suspendedMinutes > timeoutMinutes) {
+      alerts.push(createAlert(
+        ALERT_TYPES.SUSPENSION_TIMEOUT,
+        DISCREPANCY_LEVEL.HIGH,
+        `波次 [${s.waveNo}] 挂起超时，已挂起 ${suspendedMinutes} 分钟，阈值 ${timeoutMinutes} 分钟`,
+        {
+          refKey: s.id,
+          suspensionId: s.id,
+          waveId: s.waveId,
+          waveNo: s.waveNo,
+          reason: s.reason,
+          suspendedMinutes,
+          threshold: timeoutMinutes,
+          responsiblePerson: s.responsiblePerson,
+          expectedResumeAt: s.expectedResumeAt
+        }
+      ));
+    }
+  }
+  return alerts;
+}
+
 function runAllChecks() {
   const results = {};
   results.reviewTimeout = checkAllReviewTimeout();
   results.packingMiss = checkPackingConfirmationMiss();
+  results.suspensionTimeout = checkAllSuspensionTimeout();
   return results;
 }
 
@@ -191,6 +225,7 @@ module.exports = {
   checkAllReviewTimeout,
   checkStockoutWithoutExplanation,
   checkPackingConfirmationMiss,
+  checkAllSuspensionTimeout,
   runAllChecks,
   resolveAlert
 };

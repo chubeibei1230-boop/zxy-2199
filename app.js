@@ -3,7 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { errorHandler } = require('./middleware/auth');
 const { runAllChecks } = require('./utils/detector');
-const { WAVE_STATUS, DISCREPANCY_LEVEL, ROLES } = require('./models/constants');
+const { WAVE_STATUS, DISCREPANCY_LEVEL, ROLES, SUSPENSION_REASONS, SUSPENSION_STATUS, SUSPENDABLE_STATUSES } = require('./models/constants');
 
 const app = express();
 const PORT = 8145;
@@ -33,7 +33,10 @@ app.get('/', (req, res) => {
     },
     roles: Object.values(ROLES),
     waveStatuses: Object.values(WAVE_STATUS),
-    discrepancyLevels: Object.values(DISCREPANCY_LEVEL)
+    discrepancyLevels: Object.values(DISCREPANCY_LEVEL),
+    suspensionReasons: SUSPENSION_REASONS,
+    suspensionStatuses: Object.values(SUSPENSION_STATUS),
+    suspendableStatuses: SUSPENDABLE_STATUSES
   });
 });
 

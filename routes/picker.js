@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { requirePicker, requireAdmin, validateBody, authMiddleware } = require('../middleware/auth');
 const { stores, newId } = require('../models');
-const { WAVE_STATUS, STOCKOUT_REASONS, PATH_DEVIATION_REASONS } = require('../models/constants');
+const { WAVE_STATUS, STOCKOUT_REASONS, PATH_DEVIATION_REASONS, SUSPENSION_REASONS } = require('../models/constants');
 const { checkDuplicateWaveStart, checkPathDetour, checkStockoutWithoutExplanation } = require('../utils/detector');
+const { suspendWave, resumeWave, canSuspendWave, canResumeWave, getActiveSuspension, getWaveSuspensionTimeline } = require('../utils/suspension');
 
 function generateWaveNo() {
   const date = new Date();
@@ -77,6 +78,9 @@ router.post('/waves/:id/start-picking', requirePicker, (req, res, next) => {
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法开始拣货，请先恢复波次' });
+    }
     const duplicateAlert = checkDuplicateWaveStart(waveId);
     if (duplicateAlert) {
       return res.status(409).json({
@@ -106,6 +110,9 @@ router.post('/waves/:id/scan-location', requirePicker, validateBody({
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法进行拣货扫描，请先恢复波次' });
+    }
     if (wave.status !== WAVE_STATUS.PICKING) return res.status(400).json({ error: '波次不在拣货中状态' });
     const item = wave.items.find(i => i.pickItemId === pickItemId);
     if (!item) return res.status(404).json({ error: '拣货明细不存在' });
@@ -208,6 +215,9 @@ router.post('/waves/:id/finish-picking', requirePicker, (req, res, next) => {
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法完成拣货，请先恢复波次' });
+    }
     if (wave.status !== WAVE_STATUS.PICKING) return res.status(400).json({ error: '波次不在拣货中状态' });
     const unpicked = wave.items.filter(i => !i.picked);
     if (unpicked.length > 0) {
@@ -256,6 +266,72 @@ router.get('/picking-records/wave/:waveId', authMiddleware(), (req, res, next) =
   try {
     const records = stores.pickingRecords().find({ waveId: req.params.waveId });
     res.json({ data: records, total: records.length });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/suspend', requirePicker, validateBody({
+  reason: { required: true, minLength: 1 },
+  responsiblePerson: { required: true, minLength: 1 }
+}), (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const permission = canSuspendWave(wave, req.user.role, req.user.id);
+    if (!permission.allowed) {
+      return res.status(403).json({ error: permission.reason });
+    }
+    const { reason, responsiblePerson, remark = '', expectedResumeAt = null } = req.body;
+    const result = suspendWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      reason,
+      responsiblePerson,
+      remark,
+      expectedResumeAt
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/resume', requirePicker, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const permission = canResumeWave(wave, req.user.role, req.user.id);
+    if (!permission.allowed) {
+      return res.status(403).json({ error: permission.reason });
+    }
+    const { resumeRemark = '' } = req.body;
+    const result = resumeWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      resumeRemark
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/suspension-timeline', requirePicker, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.pickerId && wave.pickerId !== req.user.id) {
+      return res.status(403).json({ error: '只能查看自己负责的波次挂起记录' });
+    }
+    const timeline = getWaveSuspensionTimeline(waveId);
+    const activeSuspension = getActiveSuspension(waveId);
+    res.json({ data: { timeline, activeSuspension } });
+  } catch (e) { next(e); }
+});
+
+router.get('/suspension-reasons', requirePicker, (req, res, next) => {
+  try {
+    res.json({ data: SUSPENSION_REASONS });
   } catch (e) { next(e); }
 });
 

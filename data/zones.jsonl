@@ -2,3 +2,7 @@
 {"id":"2988155adf1d40279e1a0aa4efbecbf2","zoneCode":"C01","zoneName":"Zone C Bug4 Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:24:49.587Z","updatedAt":"2026-06-21T05:24:49.587Z"}
 {"id":"4fb9a510c0ab4a43814b7ed09ec2d8d9","zoneCode":"D01","zoneName":"Zone D Bug4 Final Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:26:15.298Z","updatedAt":"2026-06-21T05:26:15.298Z"}
 {"id":"9f25789ae8184324b4c2538bfebf829d","zoneCode":"E01","zoneName":"Zone E Final Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:26:57.262Z","updatedAt":"2026-06-21T05:26:57.262Z"}
+{"id":"3746be070b724667bf5efcef7592aa67","zoneCode":"SUS01","zoneName":"Suspension Test Zone","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T06:34:56.693Z","updatedAt":"2026-06-21T06:34:56.693Z"}
+{"id":"c897e3363cf846c8bf29794e28fb41a7","zoneCode":"SUS945344","zoneName":"Suspension Test Zone 945344","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T06:39:05.358Z","updatedAt":"2026-06-21T06:39:05.358Z"}
+{"id":"5cc654dde1a74ae690509f14a1db361a","zoneCode":"SUS041629","zoneName":"Suspension Test Zone 041629","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T06:40:41.637Z","updatedAt":"2026-06-21T06:40:41.637Z"}
+{"id":"9404a34d081042838163a81723a9fd80","zoneCode":"SUS126761","zoneName":"Suspension Test Zone 126761","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T06:42:06.768Z","updatedAt":"2026-06-21T06:42:06.768Z"}

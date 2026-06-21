@@ -60,11 +60,35 @@ const PACKING_SUGGESTIONS = [
   '其他'
 ];
 
+const SUSPENSION_REASONS = [
+  '设备故障',
+  '物料短缺',
+  '人员不足',
+  '现场异常',
+  '系统问题',
+  '质量问题',
+  '安全问题',
+  '其他'
+];
+
+const SUSPENSION_STATUS = {
+  ACTIVE: '挂起中',
+  RESUMED: '已恢复',
+  TIMEOUT: '已超时'
+};
+
+const SUSPENDABLE_STATUSES = [
+  '拣货中',
+  '待复核',
+  '差异处理中'
+];
+
 const CONFIG_DEFAULTS = {
   REVIEW_RATIO: 1.0,
   PATH_DEVIATION_THRESHOLD: 3,
   LOCATION_DISCREPANCY_THRESHOLD: 3,
   REVIEW_TIMEOUT_MINUTES: 120,
+  SUSPENSION_TIMEOUT_MINUTES: 240,
   WAVE_EFFICIENCY_BUCKETS: [
     { min: 0, max: 30, label: '<30分钟' },
     { min: 30, max: 60, label: '30-60分钟' },
@@ -83,5 +107,8 @@ module.exports = {
   STOCKOUT_REASONS,
   WRONG_ITEM_REASONS,
   PACKING_SUGGESTIONS,
+  SUSPENSION_REASONS,
+  SUSPENSION_STATUS,
+  SUSPENDABLE_STATUSES,
   CONFIG_DEFAULTS
 };
