@@ -83,6 +83,25 @@ const SUSPENDABLE_STATUSES = [
   '差异处理中'
 ];
 
+const TRANSFER_REASONS = [
+  '人员请假',
+  '工作量调整',
+  '人员离职',
+  '技能匹配',
+  '紧急支援',
+  '其他'
+];
+
+const TRANSFERABLE_ROLES = ['picker', 'checker'];
+
+const TRANSFERABLE_STATUSES = [
+  '待拣货',
+  '拣货中',
+  '待复核',
+  '差异处理中',
+  '可包装'
+];
+
 const CONFIG_DEFAULTS = {
   REVIEW_RATIO: 1.0,
   PATH_DEVIATION_THRESHOLD: 3,
@@ -110,5 +129,8 @@ module.exports = {
   SUSPENSION_REASONS,
   SUSPENSION_STATUS,
   SUSPENDABLE_STATUSES,
+  TRANSFER_REASONS,
+  TRANSFERABLE_ROLES,
+  TRANSFERABLE_STATUSES,
   CONFIG_DEFAULTS
 };

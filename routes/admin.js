@@ -4,7 +4,8 @@ const { requireAdmin, validateBody } = require('../middleware/auth');
 const { stores, newId } = require('../models');
 const { getConfig, setConfig, resolveAlert } = require('../utils/detector');
 const { suspendWave, resumeWave, getSuspensionList, getActiveSuspension, getWaveSuspensionTimeline } = require('../utils/suspension');
-const { ROLES, CONFIG_DEFAULTS, SUSPENSION_REASONS, SUSPENSION_STATUS } = require('../models/constants');
+const { transferWave, canTransferWave, getTransferList, enrichTransferWithUsers, getWaveTransferHistory, getLatestTransfer } = require('../utils/transfer');
+const { ROLES, CONFIG_DEFAULTS, SUSPENSION_REASONS, SUSPENSION_STATUS, TRANSFER_REASONS } = require('../models/constants');
 
 const parsePagination = (req) => ({
   page: Math.max(1, parseInt(req.query.page) || 1),
@@ -380,6 +381,93 @@ router.get('/waves/:id/suspension-timeline', requireAdmin, (req, res, next) => {
 router.get('/suspension-reasons', requireAdmin, (req, res, next) => {
   try {
     res.json({ data: SUSPENSION_REASONS });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/transfer', requireAdmin, validateBody({
+  targetUserId: { required: true, minLength: 1 },
+  targetRole: { required: true, enum: ['picker', 'checker'] },
+  reason: { required: true, minLength: 1 }
+}), (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const { targetUserId, targetRole, reason, remark = '' } = req.body;
+    const result = transferWave(
+      waveId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      targetUserId,
+      targetRole,
+      reason,
+      remark
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/transfer-check', requireAdmin, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const { targetRole } = req.query;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const result = canTransferWave(wave, targetRole);
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/transfer-history', requireAdmin, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const history = getWaveTransferHistory(waveId);
+    const enriched = enrichTransferWithUsers(history);
+    res.json({ data: enriched, total: enriched.length });
+  } catch (e) { next(e); }
+});
+
+router.get('/wave-transfers', requireAdmin, (req, res, next) => {
+  try {
+    const { page, pageSize } = parsePagination(req);
+    const filters = {
+      waveId: req.query.waveId,
+      waveNo: req.query.waveNo,
+      transferRole: req.query.transferRole,
+      reason: req.query.reason,
+      operatorId: req.query.operatorId,
+      originalUserId: req.query.originalUserId,
+      newUserId: req.query.newUserId,
+      userId: req.query.userId,
+      waveStatusAtTransfer: req.query.waveStatusAtTransfer,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    };
+    const result = getTransferList(filters, page, pageSize);
+    result.data = enrichTransferWithUsers(result.data);
+    res.json({ data: result.data, total: result.total, page, pageSize, totalPages: result.totalPages });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfer-reasons', requireAdmin, (req, res, next) => {
+  try {
+    res.json({ data: TRANSFER_REASONS });
+  } catch (e) { next(e); }
+});
+
+router.get('/transferable-users', requireAdmin, (req, res, next) => {
+  try {
+    const { role } = req.query;
+    const filter = { active: true };
+    if (role) filter.role = role;
+    const users = stores.users().find(filter);
+    const data = users.map(u => ({
+      id: u.id,
+      username: u.username,
+      realName: u.realName,
+      role: u.role
+    }));
+    res.json({ data, total: data.length });
   } catch (e) { next(e); }
 });
 

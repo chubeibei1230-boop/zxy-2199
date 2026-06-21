@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/auth');
 const { stores } = require('../models');
-const { WAVE_STATUS, DISCREPANCY_LEVEL, CONFIG_DEFAULTS, SUSPENSION_STATUS } = require('../models/constants');
+const { WAVE_STATUS, DISCREPANCY_LEVEL, CONFIG_DEFAULTS, SUSPENSION_STATUS, TRANSFER_REASONS } = require('../models/constants');
 const { runAllChecks, getConfig, checkAllReviewTimeout, checkPackingConfirmationMiss, checkAllSuspensionTimeout } = require('../utils/detector');
 const { getWaveSuspensionTimeline, getActiveSuspension, getSuspensionList } = require('../utils/suspension');
+const { getWaveTransferHistory, getLatestTransfer, getTransferList, enrichTransferWithUsers } = require('../utils/transfer');
 
 const parsePagination = (req) => ({
   page: Math.max(1, parseInt(req.query.page) || 1),
@@ -91,6 +92,37 @@ router.get('/waves', authMiddleware(), (req, res, next) => {
           };
         }
       }
+      if (w.lastTransferId) {
+        const latestTransfer = getLatestTransfer(w.id);
+        if (latestTransfer) {
+          w.lastTransfer = {
+            id: latestTransfer.id,
+            transferRole: latestTransfer.transferRole,
+            reason: latestTransfer.reason,
+            remark: latestTransfer.remark,
+            operatorId: latestTransfer.operatorId,
+            operatorName: latestTransfer.operatorName,
+            originalUserId: latestTransfer.originalUserId,
+            originalUserName: latestTransfer.originalUserName,
+            newUserId: latestTransfer.newUserId,
+            newUserName: latestTransfer.newUserName,
+            transferredAt: latestTransfer.transferredAt,
+            waveStatusAtTransfer: latestTransfer.waveStatusAtTransfer
+          };
+          if (latestTransfer.operatorId) {
+            const op = usersStore.findById(latestTransfer.operatorId);
+            if (op) w.lastTransfer.operatorUser = { id: op.id, username: op.username, realName: op.realName };
+          }
+          if (latestTransfer.originalUserId) {
+            const ou = usersStore.findById(latestTransfer.originalUserId);
+            if (ou) w.lastTransfer.originalUser = { id: ou.id, username: ou.username, realName: ou.realName };
+          }
+          if (latestTransfer.newUserId) {
+            const nu = usersStore.findById(latestTransfer.newUserId);
+            if (nu) w.lastTransfer.newUser = { id: nu.id, username: nu.username, realName: nu.realName };
+          }
+        }
+      }
     });
     res.json({ data, total, page, pageSize, totalPages: Math.ceil(total / pageSize) });
   } catch (e) { next(e); }
@@ -126,6 +158,38 @@ router.get('/waves/:id', authMiddleware(), (req, res, next) => {
     wave.checkRecords = checkRecords;
     wave.suspensionTimeline = suspensionTimeline;
     wave.activeSuspension = activeSuspension;
+    const transferHistory = getWaveTransferHistory(wave.id);
+    wave.transferHistory = enrichTransferWithUsers(transferHistory);
+    wave.transferCount = transferHistory.length;
+    if (transferHistory.length > 0) {
+      const latest = transferHistory[transferHistory.length - 1];
+      wave.lastTransfer = {
+        id: latest.id,
+        transferRole: latest.transferRole,
+        reason: latest.reason,
+        remark: latest.remark,
+        operatorId: latest.operatorId,
+        operatorName: latest.operatorName,
+        originalUserId: latest.originalUserId,
+        originalUserName: latest.originalUserName,
+        newUserId: latest.newUserId,
+        newUserName: latest.newUserName,
+        transferredAt: latest.transferredAt,
+        waveStatusAtTransfer: latest.waveStatusAtTransfer
+      };
+      if (latest.operatorId) {
+        const op = usersStore.findById(latest.operatorId);
+        if (op) wave.lastTransfer.operatorUser = { id: op.id, username: op.username, realName: op.realName };
+      }
+      if (latest.originalUserId) {
+        const ou = usersStore.findById(latest.originalUserId);
+        if (ou) wave.lastTransfer.originalUser = { id: ou.id, username: ou.username, realName: ou.realName };
+      }
+      if (latest.newUserId) {
+        const nu = usersStore.findById(latest.newUserId);
+        if (nu) wave.lastTransfer.newUser = { id: nu.id, username: nu.username, realName: nu.realName };
+      }
+    }
     res.json({ data: wave });
   } catch (e) { next(e); }
 });
@@ -497,6 +561,55 @@ router.get('/stats/suspension-summary', authMiddleware(), (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+router.get('/wave-transfers', authMiddleware(), (req, res, next) => {
+  try {
+    const { page, pageSize } = parsePagination(req);
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    const filters = {
+      waveId: req.query.waveId,
+      waveNo: req.query.waveNo,
+      transferRole: req.query.transferRole,
+      reason: req.query.reason,
+      operatorId: req.query.operatorId,
+      originalUserId: req.query.originalUserId,
+      newUserId: req.query.newUserId,
+      waveStatusAtTransfer: req.query.waveStatusAtTransfer,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    };
+    if (req.user.role !== 'admin') {
+      filters.userId = req.user.id;
+    }
+    if (visibleWaveIds !== null) {
+      filters.waveIds = visibleWaveIds;
+    }
+    const result = getTransferList(filters, page, pageSize);
+    result.data = enrichTransferWithUsers(result.data);
+    res.json({ data: result.data, total: result.total, page, pageSize, totalPages: result.totalPages });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/transfer-history', authMiddleware(), (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    if (visibleWaveIds !== null && !visibleWaveIds.includes(waveId)) {
+      return res.status(403).json({ error: '无权查看该波次的转派历史' });
+    }
+    const history = getWaveTransferHistory(waveId);
+    const enriched = enrichTransferWithUsers(history);
+    res.json({ data: enriched, total: enriched.length });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfer-reasons', authMiddleware(), (req, res, next) => {
+  try {
+    res.json({ data: TRANSFER_REASONS });
+  } catch (e) { next(e); }
+});
+
 router.get('/health', (req, res) => {
   try {
     const alerts = runAllChecks();
@@ -515,6 +628,9 @@ router.get('/health', (req, res) => {
           active: stores.waveSuspensions().count({ status: SUSPENSION_STATUS.ACTIVE }),
           timeout: stores.waveSuspensions().count({ status: SUSPENSION_STATUS.TIMEOUT }),
           total: stores.waveSuspensions().count()
+        },
+        waveTransfers: {
+          total: stores.waveTransfers().count()
         }
       },
       pendingChecks: alerts
