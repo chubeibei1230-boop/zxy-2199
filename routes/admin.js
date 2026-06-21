@@ -305,7 +305,9 @@ router.post('/alerts/:id/resolve', requireAdmin, (req, res, next) => {
 
 router.post('/waves/:id/suspend', requireAdmin, validateBody({
   reason: { required: true, minLength: 1 },
-  responsiblePerson: { required: true, minLength: 1 }
+  responsiblePerson: { required: true, minLength: 1 },
+  remark: { required: true, minLength: 1 },
+  expectedResumeAt: { required: true, minLength: 1 }
 }), (req, res, next) => {
   try {
     const waveId = req.params.id;

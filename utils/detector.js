@@ -168,35 +168,8 @@ function checkPackingConfirmationMiss() {
 }
 
 function checkAllSuspensionTimeout() {
-  const { SUSPENSION_STATUS, CONFIG_DEFAULTS: cfg } = require('../models/constants');
-  const timeoutMinutes = getConfig('SUSPENSION_TIMEOUT_MINUTES') || cfg.SUSPENSION_TIMEOUT_MINUTES;
-  const suspensions = stores.waveSuspensions().find({
-    status: SUSPENSION_STATUS.ACTIVE
-  });
-  const alerts = [];
-  const now = new Date();
-  for (const s of suspensions) {
-    const suspendedMinutes = Math.round((now - new Date(s.suspendedAt)) / (1000 * 60));
-    if (suspendedMinutes > timeoutMinutes) {
-      alerts.push(createAlert(
-        ALERT_TYPES.SUSPENSION_TIMEOUT,
-        DISCREPANCY_LEVEL.HIGH,
-        `波次 [${s.waveNo}] 挂起超时，已挂起 ${suspendedMinutes} 分钟，阈值 ${timeoutMinutes} 分钟`,
-        {
-          refKey: s.id,
-          suspensionId: s.id,
-          waveId: s.waveId,
-          waveNo: s.waveNo,
-          reason: s.reason,
-          suspendedMinutes,
-          threshold: timeoutMinutes,
-          responsiblePerson: s.responsiblePerson,
-          expectedResumeAt: s.expectedResumeAt
-        }
-      ));
-    }
-  }
-  return alerts;
+  const { checkSuspensionTimeout } = require('./suspension');
+  return checkSuspensionTimeout();
 }
 
 function runAllChecks() {

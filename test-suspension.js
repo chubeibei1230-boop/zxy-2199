@@ -192,7 +192,9 @@ async function main() {
     
     const res = await request(`/api/picker/waves/${wave9.id}/suspend`, "POST", pickerH, {
       reason: "设备故障",
-      responsiblePerson: "测试责任人"
+      responsiblePerson: "测试责任人",
+      remark: "测试备注",
+      expectedResumeAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
     });
     
     if (res.ok) throw new Error("拣货员不应该能挂起待复核状态的波次");
@@ -262,7 +264,8 @@ async function main() {
     const res = await request(`/api/picker/waves/${wave.id}/suspend`, "POST", pickerH, {
       reason: "人员不足",
       responsiblePerson: "拣货组长",
-      remark: "拣货员主动挂起"
+      remark: "拣货员主动挂起",
+      expectedResumeAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
     });
     if (!res.ok) throw new Error("拣货员应该能挂起自己的波次: " + JSON.stringify(res.data));
     console.log("   拣货员挂起成功，状态:", res.data.data.wave.isSuspended);
@@ -300,7 +303,8 @@ async function main() {
     const res = await request(`/api/checker/waves/${wave.id}/suspend`, "POST", checkerH, {
       reason: "系统问题",
       responsiblePerson: "复核组长",
-      remark: "复核员主动挂起"
+      remark: "复核员主动挂起",
+      expectedResumeAt: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
     });
     if (!res.ok) throw new Error("复核员应该能挂起待复核波次: " + JSON.stringify(res.data));
     console.log("   复核员挂起成功，状态:", res.data.data.wave.isSuspended);
@@ -343,7 +347,9 @@ async function main() {
     
     await request(`/api/admin/waves/${wave.id}/suspend`, "POST", adminH, {
       reason: "现场异常",
-      responsiblePerson: "主管A"
+      responsiblePerson: "主管A",
+      remark: "第一次挂起测试",
+      expectedResumeAt: new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString()
     });
     
     await request(`/api/admin/waves/${wave.id}/resume`, "POST", adminH, {
@@ -352,7 +358,9 @@ async function main() {
     
     await request(`/api/admin/waves/${wave.id}/suspend`, "POST", adminH, {
       reason: "设备故障",
-      responsiblePerson: "主管B"
+      responsiblePerson: "主管B",
+      remark: "第二次挂起测试",
+      expectedResumeAt: new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString()
     });
     
     await request(`/api/admin/waves/${wave.id}/resume`, "POST", adminH, {

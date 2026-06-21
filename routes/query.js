@@ -11,12 +11,29 @@ const parsePagination = (req) => ({
   pageSize: Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 50))
 });
 
+function getUserVisibleWaveIds(user) {
+  if (!user || user.role === 'admin') return null;
+  const wavesStore = stores.waves();
+  const allWaves = wavesStore.findAll();
+  if (user.role === 'picker') {
+    return allWaves.filter(w => w.pickerId === user.id).map(w => w.id);
+  }
+  if (user.role === 'checker') {
+    return allWaves.filter(w => w.checkerId === user.id).map(w => w.id);
+  }
+  return [];
+}
+
 router.get('/waves', authMiddleware(), (req, res, next) => {
   try {
     const { page, pageSize } = parsePagination(req);
     const { zoneId, waveNo, skuCode, pickerId, status, startDate, endDate, isSuspended } = req.query;
     const wavesStore = stores.waves();
     let all = wavesStore.findAll();
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    if (visibleWaveIds !== null) {
+      all = all.filter(w => visibleWaveIds.includes(w.id));
+    }
     if (zoneId) all = all.filter(w => w.zoneId === zoneId);
     if (waveNo) all = all.filter(w => String(w.waveNo || '').includes(waveNo));
     if (status) all = all.filter(w => w.status === status);
@@ -83,6 +100,10 @@ router.get('/waves/:id', authMiddleware(), (req, res, next) => {
   try {
     const wave = stores.waves().findById(req.params.id);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    if (visibleWaveIds !== null && !visibleWaveIds.includes(wave.id)) {
+      return res.status(403).json({ error: '无权查看该波次详情' });
+    }
     const zonesStore = stores.zones();
     const usersStore = stores.users();
     const pickingRecords = stores.pickingRecords().find({ waveId: wave.id });
@@ -318,6 +339,7 @@ router.get('/stats/wave-efficiency', authMiddleware(), (req, res, next) => {
 router.get('/wave-suspensions', authMiddleware(), (req, res, next) => {
   try {
     const { page, pageSize } = parsePagination(req);
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
     const filters = {
       waveId: req.query.waveId,
       waveNo: req.query.waveNo,
@@ -328,6 +350,9 @@ router.get('/wave-suspensions', authMiddleware(), (req, res, next) => {
       startDate: req.query.startDate,
       endDate: req.query.endDate
     };
+    if (visibleWaveIds !== null) {
+      filters.waveIds = visibleWaveIds;
+    }
     const result = getSuspensionList(filters, page, pageSize);
     const usersStore = stores.users();
     result.data.forEach(s => {
@@ -349,6 +374,10 @@ router.get('/waves/:id/suspension-timeline', authMiddleware(), (req, res, next) 
     const waveId = req.params.id;
     const wave = stores.waves().findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    if (visibleWaveIds !== null && !visibleWaveIds.includes(waveId)) {
+      return res.status(403).json({ error: '无权查看该波次的挂起记录' });
+    }
     const timeline = getWaveSuspensionTimeline(waveId);
     const activeSuspension = getActiveSuspension(waveId);
     res.json({ data: { timeline, activeSuspension } });
@@ -359,13 +388,19 @@ router.get('/stats/suspension-timeouts', authMiddleware(), (req, res, next) => {
   try {
     const timeoutMinutes = getConfig('SUSPENSION_TIMEOUT_MINUTES') || CONFIG_DEFAULTS.SUSPENSION_TIMEOUT_MINUTES;
     const now = new Date();
-    const suspensions = stores.waveSuspensions().find({ status: SUSPENSION_STATUS.ACTIVE });
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    const suspensions = stores.waveSuspensions().find({ 
+      status: { $in: [SUSPENSION_STATUS.ACTIVE, SUSPENSION_STATUS.TIMEOUT] } 
+    });
+    const filteredSuspensions = visibleWaveIds !== null
+      ? suspensions.filter(s => visibleWaveIds.includes(s.waveId))
+      : suspensions;
     const zonesStore = stores.zones();
     const usersStore = stores.users();
     const list = [];
-    for (const s of suspensions) {
+    for (const s of filteredSuspensions) {
       const suspendedMinutes = Math.round((now - new Date(s.suspendedAt)) / (1000 * 60));
-      if (suspendedMinutes > timeoutMinutes) {
+      if (suspendedMinutes > timeoutMinutes || s.status === SUSPENSION_STATUS.TIMEOUT) {
         const wave = stores.waves().findById(s.waveId);
         const zone = wave && wave.zoneId ? zonesStore.findById(wave.zoneId) : null;
         const picker = wave && wave.pickerId ? usersStore.findById(wave.pickerId) : null;
@@ -375,16 +410,18 @@ router.get('/stats/suspension-timeouts', authMiddleware(), (req, res, next) => {
           waveId: s.waveId,
           waveNo: s.waveNo,
           waveStatus: wave ? wave.status : null,
+          suspensionStatus: s.status,
           reason: s.reason,
           responsiblePerson: s.responsiblePerson,
           remark: s.remark,
           expectedResumeAt: s.expectedResumeAt,
           suspendedAt: s.suspendedAt,
+          timeoutAt: s.timeoutAt || null,
           suspendedByName: s.suspendedByName,
           suspendedByUser: suspendedByUser ? { id: suspendedByUser.id, username: suspendedByUser.username, realName: suspendedByUser.realName } : null,
           suspendedMinutes,
           timeoutThreshold: timeoutMinutes,
-          overdueMinutes: suspendedMinutes - timeoutMinutes,
+          overdueMinutes: Math.max(0, suspendedMinutes - timeoutMinutes),
           zone: zone ? { zoneCode: zone.zoneCode, zoneName: zone.zoneName } : null,
           picker: picker ? { username: picker.username, realName: picker.realName } : null
         });
@@ -402,7 +439,11 @@ router.get('/stats/suspension-timeouts', authMiddleware(), (req, res, next) => {
 router.get('/stats/suspension-summary', authMiddleware(), (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
     let suspensions = stores.waveSuspensions().findAll();
+    if (visibleWaveIds !== null) {
+      suspensions = suspensions.filter(s => visibleWaveIds.includes(s.waveId));
+    }
     if (startDate) {
       const sd = new Date(startDate);
       suspensions = suspensions.filter(s => new Date(s.suspendedAt) >= sd);
@@ -413,14 +454,18 @@ router.get('/stats/suspension-summary', authMiddleware(), (req, res, next) => {
       suspensions = suspensions.filter(s => new Date(s.suspendedAt) <= ed);
     }
     const activeCount = suspensions.filter(s => s.status === SUSPENSION_STATUS.ACTIVE).length;
+    const timeoutCount = suspensions.filter(s => s.status === SUSPENSION_STATUS.TIMEOUT).length;
     const resumedCount = suspensions.filter(s => s.status === SUSPENSION_STATUS.RESUMED).length;
     const totalCount = suspensions.length;
     const reasonStats = {};
     for (const s of suspensions) {
       if (!reasonStats[s.reason]) {
-        reasonStats[s.reason] = { count: 0, totalDuration: 0 };
+        reasonStats[s.reason] = { count: 0, totalDuration: 0, activeCount: 0, timeoutCount: 0, resumedCount: 0 };
       }
       reasonStats[s.reason].count++;
+      if (s.status === SUSPENSION_STATUS.ACTIVE) reasonStats[s.reason].activeCount++;
+      if (s.status === SUSPENSION_STATUS.TIMEOUT) reasonStats[s.reason].timeoutCount++;
+      if (s.status === SUSPENSION_STATUS.RESUMED) reasonStats[s.reason].resumedCount++;
       if (s.suspensionDurationMinutes) {
         reasonStats[s.reason].totalDuration += s.suspensionDurationMinutes;
       }
@@ -433,6 +478,7 @@ router.get('/stats/suspension-summary', authMiddleware(), (req, res, next) => {
       data: {
         totalSuspensions: totalCount,
         activeSuspensions: activeCount,
+        timeoutSuspensions: timeoutCount,
         resumedSuspensions: resumedCount,
         activeSuspendedWaves,
         totalDurationMinutes: totalDuration,
@@ -440,6 +486,9 @@ router.get('/stats/suspension-summary', authMiddleware(), (req, res, next) => {
         reasonBreakdown: Object.entries(reasonStats).map(([reason, stats]) => ({
           reason,
           count: stats.count,
+          activeCount: stats.activeCount,
+          timeoutCount: stats.timeoutCount,
+          resumedCount: stats.resumedCount,
           totalDurationMinutes: stats.totalDuration,
           avgDurationMinutes: stats.count > 0 ? Math.round(stats.totalDuration / stats.count) : 0
         })).sort((a, b) => b.count - a.count)
@@ -462,7 +511,11 @@ router.get('/health', (req, res) => {
         waves: stores.waves().count(),
         users: stores.users().count(),
         alerts: stores.alerts().count({ resolved: false }),
-        waveSuspensions: stores.waveSuspensions().count({ status: SUSPENSION_STATUS.ACTIVE })
+        waveSuspensions: {
+          active: stores.waveSuspensions().count({ status: SUSPENSION_STATUS.ACTIVE }),
+          timeout: stores.waveSuspensions().count({ status: SUSPENSION_STATUS.TIMEOUT }),
+          total: stores.waveSuspensions().count()
+        }
       },
       pendingChecks: alerts
     });

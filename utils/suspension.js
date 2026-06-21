@@ -22,7 +22,7 @@ function isWaveSuspended(waveId) {
 function getActiveSuspension(waveId) {
   const suspensions = stores.waveSuspensions().find({
     waveId,
-    status: SUSPENSION_STATUS.ACTIVE
+    status: { $in: [SUSPENSION_STATUS.ACTIVE, SUSPENSION_STATUS.TIMEOUT] }
   });
   if (suspensions.length > 0) {
     return suspensions[0];
@@ -78,14 +78,18 @@ function suspendWave(waveId, operatorId, operatorName, reason, responsiblePerson
   if (!responsiblePerson || String(responsiblePerson).trim() === '') {
     throw new Error('责任人不能为空');
   }
-  if (expectedResumeAt) {
-    const expectedTime = new Date(expectedResumeAt);
-    if (isNaN(expectedTime.getTime())) {
-      throw new Error('预计恢复时间格式不正确');
-    }
-    if (expectedTime <= new Date()) {
-      throw new Error('预计恢复时间必须晚于当前时间');
-    }
+  if (!remark || String(remark).trim() === '') {
+    throw new Error('备注不能为空');
+  }
+  if (!expectedResumeAt) {
+    throw new Error('预计恢复时间不能为空');
+  }
+  const expectedTime = new Date(expectedResumeAt);
+  if (isNaN(expectedTime.getTime())) {
+    throw new Error('预计恢复时间格式不正确');
+  }
+  if (expectedTime <= new Date()) {
+    throw new Error('预计恢复时间必须晚于当前时间');
   }
   const suspensionId = newId();
   const suspension = stores.waveSuspensions().create({
@@ -148,7 +152,8 @@ function resumeWave(waveId, operatorId, operatorName, resumeRemark) {
 
 function checkSuspensionTimeout() {
   const timeoutMinutes = getConfig('SUSPENSION_TIMEOUT_MINUTES') || CONFIG_DEFAULTS.SUSPENSION_TIMEOUT_MINUTES;
-  const suspensions = stores.waveSuspensions().find({
+  const suspensionsStore = stores.waveSuspensions();
+  const suspensions = suspensionsStore.find({
     status: SUSPENSION_STATUS.ACTIVE
   });
   const alerts = [];
@@ -156,6 +161,11 @@ function checkSuspensionTimeout() {
   for (const s of suspensions) {
     const suspendedMinutes = Math.round((now - new Date(s.suspendedAt)) / (1000 * 60));
     if (suspendedMinutes > timeoutMinutes) {
+      suspensionsStore.update(s.id, {
+        status: SUSPENSION_STATUS.TIMEOUT,
+        timeoutAt: now.toISOString(),
+        timeoutMinutes: suspendedMinutes
+      });
       const { createAlert } = require('./detector');
       alerts.push(createAlert(
         'SUSPENSION_TIMEOUT',
@@ -182,6 +192,9 @@ function getSuspensionList(filters = {}, page = 1, pageSize = 20) {
   const store = stores.waveSuspensions();
   let all = store.findAll();
   if (filters.waveId) all = all.filter(s => s.waveId === filters.waveId);
+  if (filters.waveIds && Array.isArray(filters.waveIds)) {
+    all = all.filter(s => filters.waveIds.includes(s.waveId));
+  }
   if (filters.waveNo) all = all.filter(s => String(s.waveNo || '').includes(filters.waveNo));
   if (filters.status) all = all.filter(s => s.status === filters.status);
   if (filters.reason) all = all.filter(s => s.reason === filters.reason);

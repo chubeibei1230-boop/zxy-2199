@@ -148,6 +148,10 @@ router.put('/check-records/:id', requireChecker, (req, res, next) => {
   try {
     const rec = stores.checkRecords().findById(req.params.id);
     if (!rec) return res.status(404).json({ error: '复核记录不存在' });
+    const wave = stores.waves().findById(rec.waveId);
+    if (wave && wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法修改复核记录，请先恢复波次' });
+    }
     const updated = stores.checkRecords().update(req.params.id, req.body);
     res.json({ data: updated });
   } catch (e) { next(e); }
@@ -266,7 +270,9 @@ router.get('/check-records/wave/:waveId', authMiddleware(), (req, res, next) => 
 
 router.post('/waves/:id/suspend', requireChecker, validateBody({
   reason: { required: true, minLength: 1 },
-  responsiblePerson: { required: true, minLength: 1 }
+  responsiblePerson: { required: true, minLength: 1 },
+  remark: { required: true, minLength: 1 },
+  expectedResumeAt: { required: true, minLength: 1 }
 }), (req, res, next) => {
   try {
     const waveId = req.params.id;

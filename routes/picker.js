@@ -165,6 +165,11 @@ router.post('/picking-records/:id/submit-qty', requirePicker, validateBody({
     const recordsStore = stores.pickingRecords();
     const record = recordsStore.findById(req.params.id);
     if (!record) return res.status(404).json({ error: '拣货记录不存在' });
+    const wavesStore = stores.waves();
+    const wave = wavesStore.findById(record.waveId);
+    if (wave && wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法提交拣货数量，请先恢复波次' });
+    }
     if (record.actualQty !== null && record.actualQty !== undefined) {
       return res.status(409).json({ error: '该货位已提交过数量，如需修改请使用更新接口' });
     }
@@ -174,8 +179,6 @@ router.post('/picking-records/:id/submit-qty', requirePicker, validateBody({
     if (actualQty === 0 && stockoutReason && !STOCKOUT_REASONS.includes(stockoutReason) && stockoutReason !== '其他') {
       return res.status(400).json({ error: `缺货原因必须是: ${STOCKOUT_REASONS.join(', ')}` });
     }
-    const wavesStore = stores.waves();
-    const wave = wavesStore.findById(record.waveId);
     const updatedItems = wave.items.map(it => {
       if (it.pickItemId === record.pickItemId) {
         return { ...it, actualQty, picked: true, status: 'picked' };
@@ -204,6 +207,10 @@ router.put('/picking-records/:id', requirePicker, (req, res, next) => {
   try {
     const record = stores.pickingRecords().findById(req.params.id);
     if (!record) return res.status(404).json({ error: '拣货记录不存在' });
+    const wave = stores.waves().findById(record.waveId);
+    if (wave && wave.isSuspended) {
+      return res.status(400).json({ error: '波次已挂起，无法修改拣货记录，请先恢复波次' });
+    }
     const updated = stores.pickingRecords().update(req.params.id, req.body);
     res.json({ data: updated });
   } catch (e) { next(e); }
@@ -271,7 +278,9 @@ router.get('/picking-records/wave/:waveId', authMiddleware(), (req, res, next) =
 
 router.post('/waves/:id/suspend', requirePicker, validateBody({
   reason: { required: true, minLength: 1 },
-  responsiblePerson: { required: true, minLength: 1 }
+  responsiblePerson: { required: true, minLength: 1 },
+  remark: { required: true, minLength: 1 },
+  expectedResumeAt: { required: true, minLength: 1 }
 }), (req, res, next) => {
   try {
     const waveId = req.params.id;
