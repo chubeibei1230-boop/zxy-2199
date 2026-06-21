@@ -1,0 +1,217 @@
+const express = require('express');
+const router = express.Router();
+const { requireChecker, requireAdmin, validateBody, authMiddleware } = require('../middleware/auth');
+const { stores, newId } = require('../models');
+const { WAVE_STATUS, WRONG_ITEM_REASONS, PACKING_SUGGESTIONS, DISCREPANCY_LEVEL } = require('../models/constants');
+const { checkLocationDiscrepancyCluster, getConfig } = require('../utils/detector');
+
+function calcDiscrepancyLevel(diffRatio) {
+  const abs = Math.abs(diffRatio);
+  if (abs === 0) return null;
+  if (abs < 0.1) return DISCREPANCY_LEVEL.LOW;
+  if (abs < 0.3) return DISCREPANCY_LEVEL.MEDIUM;
+  if (abs < 0.5) return DISCREPANCY_LEVEL.HIGH;
+  return DISCREPANCY_LEVEL.CRITICAL;
+}
+
+router.post('/waves/:id/start-checking', requireChecker, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const checkerId = req.user.id;
+    const wavesStore = stores.waves();
+    const wave = wavesStore.findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.status !== WAVE_STATUS.TO_CHECK && wave.status !== WAVE_STATUS.DISCREPANCY) {
+      return res.status(400).json({ error: `当前波次状态为 ${wave.status}，只能从待复核或差异处理中开始` });
+    }
+    const ratio = getConfig('REVIEW_RATIO') || 1.0;
+    const itemCount = wave.items.length;
+    const sampleSize = Math.max(1, Math.ceil(itemCount * ratio));
+    const sampledItemIds = wave.items.slice(0, sampleSize).map(i => i.pickItemId);
+    const updated = wavesStore.update(waveId, {
+      status: wave.status === WAVE_STATUS.TO_CHECK ? WAVE_STATUS.TO_CHECK : WAVE_STATUS.DISCREPANCY,
+      checkerId: wave.checkerId || checkerId,
+      checkingStartedAt: wave.checkingStartedAt || new Date().toISOString(),
+      reviewSampleSize: sampleSize,
+      reviewSampledItemIds: sampledItemIds
+    });
+    res.json({ data: updated, sampleSize, sampledItemIds });
+  } catch (e) { next(e); }
+});
+
+router.post('/check-records', requireChecker, validateBody({
+  waveId: { required: true, minLength: 1 },
+  pickItemId: { required: true, minLength: 1 },
+  checkedQty: { required: true, type: 'integer', min: 0 }
+}), (req, res, next) => {
+  try {
+    const { waveId, pickItemId, checkedQty, wrongItemSku = null, wrongItemReason = '',
+            packingSuggestion = '', remark = '', hasWrongItem = false } = req.body;
+    const wavesStore = stores.waves();
+    const wave = wavesStore.findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.status !== WAVE_STATUS.TO_CHECK && wave.status !== WAVE_STATUS.DISCREPANCY) {
+      return res.status(400).json({ error: '波次不在可复核状态' });
+    }
+    const item = wave.items.find(i => i.pickItemId === pickItemId);
+    if (!item) return res.status(404).json({ error: '拣货明细不存在' });
+    if (hasWrongItem && !wrongItemReason) {
+      return res.status(400).json({ error: '存在错品时必须填写错品原因' });
+    }
+    if (wrongItemReason && !WRONG_ITEM_REASONS.includes(wrongItemReason) && wrongItemReason !== '其他') {
+      return res.status(400).json({ error: `错品原因必须是: ${WRONG_ITEM_REASONS.join(', ')}` });
+    }
+    if (packingSuggestion && !PACKING_SUGGESTIONS.includes(packingSuggestion) && packingSuggestion !== '其他') {
+      return res.status(400).json({ error: `包装建议必须是: ${PACKING_SUGGESTIONS.join(', ')}` });
+    }
+    const qtyDiff = checkedQty - (item.actualQty ?? 0);
+    const diffRatio = item.planQty > 0 ? qtyDiff / item.planQty : 0;
+    const hasDiscrepancy = qtyDiff !== 0 || hasWrongItem;
+    const discrepancyLevel = hasDiscrepancy
+      ? (qtyDiff !== 0 ? calcDiscrepancyLevel(diffRatio) : DISCREPANCY_LEVEL.MEDIUM)
+      : null;
+    const record = stores.checkRecords().create({
+      id: newId(),
+      waveId,
+      waveNo: wave.waveNo,
+      pickItemId,
+      skuId: item.skuId,
+      skuCode: item.skuCode,
+      locationId: item.locationId,
+      locationCode: item.locationCode,
+      checkerId: req.user.id,
+      planQty: item.planQty,
+      pickedQty: item.actualQty ?? 0,
+      checkedQty,
+      qtyDiff,
+      diffRatio,
+      hasWrongItem,
+      wrongItemSku,
+      wrongItemReason,
+      packingSuggestion,
+      hasDiscrepancy,
+      discrepancyLevel,
+      remark,
+      checkedAt: new Date().toISOString(),
+      discrepancyResolved: !hasDiscrepancy,
+      packingConfirmed: false
+    });
+    if (hasDiscrepancy) {
+      checkLocationDiscrepancyCluster(item.locationId);
+      wavesStore.update(waveId, { status: WAVE_STATUS.DISCREPANCY });
+    }
+    res.json({ data: record });
+  } catch (e) { next(e); }
+});
+
+router.put('/check-records/:id', requireChecker, (req, res, next) => {
+  try {
+    const rec = stores.checkRecords().findById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '复核记录不存在' });
+    const updated = stores.checkRecords().update(req.params.id, req.body);
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.post('/check-records/:id/resolve-discrepancy', requireChecker, validateBody({
+  resolution: { required: true, minLength: 1 }
+}), (req, res, next) => {
+  try {
+    const { resolution, resolverRemark = '' } = req.body;
+    const store = stores.checkRecords();
+    const rec = store.findById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '复核记录不存在' });
+    if (!rec.hasDiscrepancy) return res.status(400).json({ error: '该记录无差异' });
+    const updated = store.update(rec.id, {
+      discrepancyResolved: true,
+      discrepancyResolution: resolution,
+      resolverRemark,
+      resolverId: req.user.id,
+      resolvedAt: new Date().toISOString()
+    });
+    const waveStore = stores.waves();
+    const wave = waveStore.findById(rec.waveId);
+    const waveChecks = store.find({ waveId: rec.waveId });
+    const allResolved = waveChecks.every(c => !c.hasDiscrepancy || c.discrepancyResolved);
+    if (allResolved && wave.status === WAVE_STATUS.DISCREPANCY) {
+      waveStore.update(rec.waveId, { status: WAVE_STATUS.TO_PACK });
+    }
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.post('/check-records/:id/confirm-packing', requireChecker, (req, res, next) => {
+  try {
+    const { packageNo = '', packageWeight = null, packageRemark = '' } = req.body;
+    const store = stores.checkRecords();
+    const rec = store.findById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '复核记录不存在' });
+    if (rec.hasDiscrepancy && !rec.discrepancyResolved) {
+      return res.status(400).json({ error: '存在未解决的差异，无法进行包装确认' });
+    }
+    const updated = store.update(rec.id, {
+      packingConfirmed: true,
+      packageNo,
+      packageWeight,
+      packageRemark,
+      packingConfirmedAt: new Date().toISOString(),
+      packingConfirmedBy: req.user.id
+    });
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.post('/waves/:id/final-confirm', requireChecker, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wavesStore = stores.waves();
+    const wave = wavesStore.findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    if (wave.status !== WAVE_STATUS.TO_PACK) {
+      return res.status(400).json({ error: `当前状态为 ${wave.status}，只能从可包装状态最终确认` });
+    }
+    const checks = stores.checkRecords().find({ waveId });
+    const itemsNeedCheck = wave.reviewSampledItemIds || wave.items.map(i => i.pickItemId);
+    const pendingDiscrepancies = checks.filter(c => c.hasDiscrepancy && !c.discrepancyResolved);
+    if (pendingDiscrepancies.length > 0) {
+      return res.status(400).json({
+        error: `有 ${pendingDiscrepancies.length} 条差异未解决`,
+        pending: pendingDiscrepancies.map(c => ({ id: c.id, skuCode: c.skuCode, locationCode: c.locationCode }))
+      });
+    }
+    const relatedChecks = checks.filter(c => itemsNeedCheck.includes(c.pickItemId));
+    const unconfirmedPacking = relatedChecks.filter(c => !c.packingConfirmed);
+    if (unconfirmedPacking.length > 0) {
+      return res.status(400).json({
+        error: `有 ${unconfirmedPacking.length} 条记录未完成包装确认`,
+        unconfirmed: unconfirmedPacking.map(c => ({ id: c.id, skuCode: c.skuCode, locationCode: c.locationCode }))
+      });
+    }
+    const updated = wavesStore.update(waveId, {
+      status: WAVE_STATUS.CLOSED,
+      checkingFinishedAt: new Date().toISOString(),
+      closedAt: new Date().toISOString(),
+      finalConfirmedBy: req.user.id
+    });
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/my-checking', requireChecker, (req, res, next) => {
+  try {
+    const waves = stores.waves().find({
+      status: { $in: [WAVE_STATUS.TO_CHECK, WAVE_STATUS.DISCREPANCY, WAVE_STATUS.TO_PACK] }
+    });
+    const filtered = waves.filter(w => !w.checkerId || w.checkerId === req.user.id);
+    res.json({ data: filtered, total: filtered.length });
+  } catch (e) { next(e); }
+});
+
+router.get('/check-records/wave/:waveId', authMiddleware(), (req, res, next) => {
+  try {
+    const records = stores.checkRecords().find({ waveId: req.params.waveId });
+    res.json({ data: records, total: records.length });
+  } catch (e) { next(e); }
+});
+
+module.exports = router;
