@@ -31,11 +31,7 @@ function canTransferWave(wave, targetRole) {
     }
   }
   if (wave.isSuspended) {
-    return { 
-      allowed: true, 
-      warning: '波次当前处于挂起状态，转派后新负责人需先恢复波次才能继续操作',
-      isSuspended: true
-    };
+    return { allowed: false, reason: '波次当前处于挂起状态，请先恢复波次后再转派' };
   }
   return { allowed: true, isSuspended: false };
 }
