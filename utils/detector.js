@@ -8,7 +8,8 @@ const ALERT_TYPES = {
   REVIEW_TIMEOUT: 'REVIEW_TIMEOUT',
   STOCKOUT_NO_EXPLANATION: 'STOCKOUT_NO_EXPLANATION',
   PACKING_CONFIRM_MISS: 'PACKING_CONFIRM_MISS',
-  SUSPENSION_TIMEOUT: 'SUSPENSION_TIMEOUT'
+  SUSPENSION_TIMEOUT: 'SUSPENSION_TIMEOUT',
+  TRANSFER_TIMEOUT: 'TRANSFER_TIMEOUT'
 };
 
 function getConfig(key) {
@@ -172,11 +173,17 @@ function checkAllSuspensionTimeout() {
   return checkSuspensionTimeout();
 }
 
+function checkAllTransferTimeout() {
+  const { checkAllTransferTimeout: checkTransferTimeout } = require('./transfer');
+  return checkTransferTimeout();
+}
+
 function runAllChecks() {
   const results = {};
   results.reviewTimeout = checkAllReviewTimeout();
   results.packingMiss = checkPackingConfirmationMiss();
   results.suspensionTimeout = checkAllSuspensionTimeout();
+  results.transferTimeout = checkAllTransferTimeout();
   return results;
 }
 
@@ -199,6 +206,7 @@ module.exports = {
   checkStockoutWithoutExplanation,
   checkPackingConfirmationMiss,
   checkAllSuspensionTimeout,
+  checkAllTransferTimeout,
   runAllChecks,
   resolveAlert
 };

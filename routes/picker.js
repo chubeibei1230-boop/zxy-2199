@@ -5,6 +5,8 @@ const { stores, newId } = require('../models');
 const { WAVE_STATUS, STOCKOUT_REASONS, PATH_DEVIATION_REASONS, SUSPENSION_REASONS } = require('../models/constants');
 const { checkDuplicateWaveStart, checkPathDetour, checkStockoutWithoutExplanation } = require('../utils/detector');
 const { suspendWave, resumeWave, canSuspendWave, canResumeWave, getActiveSuspension, getWaveSuspensionTimeline } = require('../utils/suspension');
+const { acceptTransfer, rejectTransfer, getPendingTransferForUser, getMyTransferList, enrichTransferWithUsers, getUserTransferStats } = require('../utils/transfer');
+const { TRANSFER_REJECT_REASONS, ROLES } = require('../models/constants');
 
 function generateWaveNo() {
   const date = new Date();
@@ -370,6 +372,75 @@ router.get('/waves/:id/suspension-timeline', requirePicker, (req, res, next) => 
 router.get('/suspension-reasons', requirePicker, (req, res, next) => {
   try {
     res.json({ data: SUSPENSION_REASONS });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfers/pending', requirePicker, (req, res, next) => {
+  try {
+    const pending = getPendingTransferForUser(req.user.id, ROLES.PICKER);
+    const enriched = enrichTransferWithUsers(pending);
+    res.json({ data: enriched, total: enriched.length });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfers/my', requirePicker, (req, res, next) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize) || 20));
+    const filters = {
+      status: req.query.status,
+      reason: req.query.reason,
+      waveNo: req.query.waveNo,
+      type: req.query.type,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate
+    };
+    const result = getMyTransferList(req.user.id, ROLES.PICKER, filters, page, pageSize);
+    result.data = enrichTransferWithUsers(result.data);
+    res.json({ data: result.data, total: result.total, page, pageSize, totalPages: result.totalPages });
+  } catch (e) { next(e); }
+});
+
+router.post('/transfers/:id/accept', requirePicker, (req, res, next) => {
+  try {
+    const transferId = req.params.id;
+    const result = acceptTransfer(
+      transferId,
+      req.user.id,
+      req.user.realName || req.user.username
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post('/transfers/:id/reject', requirePicker, validateBody({
+  rejectReason: { required: true, minLength: 1 },
+  rejectRemark: { required: true, minLength: 1 }
+}), (req, res, next) => {
+  try {
+    const transferId = req.params.id;
+    const { rejectReason, rejectRemark } = req.body;
+    const result = rejectTransfer(
+      transferId,
+      req.user.id,
+      req.user.realName || req.user.username,
+      rejectReason,
+      rejectRemark
+    );
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfers/stats', requirePicker, (req, res, next) => {
+  try {
+    const stats = getUserTransferStats(req.user.id, req.query.startDate, req.query.endDate);
+    res.json({ data: stats });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfer-reject-reasons', requirePicker, (req, res, next) => {
+  try {
+    res.json({ data: TRANSFER_REJECT_REASONS });
   } catch (e) { next(e); }
 });
 

@@ -5,7 +5,7 @@ const { stores } = require('../models');
 const { WAVE_STATUS, DISCREPANCY_LEVEL, CONFIG_DEFAULTS, SUSPENSION_STATUS, TRANSFER_REASONS } = require('../models/constants');
 const { runAllChecks, getConfig, checkAllReviewTimeout, checkPackingConfirmationMiss, checkAllSuspensionTimeout } = require('../utils/detector');
 const { getWaveSuspensionTimeline, getActiveSuspension, getSuspensionList } = require('../utils/suspension');
-const { getWaveTransferHistory, getLatestTransfer, getTransferList, enrichTransferWithUsers } = require('../utils/transfer');
+const { getWaveTransferHistory, getLatestTransfer, getTransferList, enrichTransferWithUsers, getActiveTransfer, getTransferStats, getTimeoutTransferList } = require('../utils/transfer');
 
 const parsePagination = (req) => ({
   page: Math.max(1, parseInt(req.query.page) || 1),
@@ -107,7 +107,12 @@ router.get('/waves', authMiddleware(), (req, res, next) => {
             newUserId: latestTransfer.newUserId,
             newUserName: latestTransfer.newUserName,
             transferredAt: latestTransfer.transferredAt,
-            waveStatusAtTransfer: latestTransfer.waveStatusAtTransfer
+            waveStatusAtTransfer: latestTransfer.waveStatusAtTransfer,
+            status: latestTransfer.status,
+            handledAt: latestTransfer.handledAt,
+            rejectReason: latestTransfer.rejectReason,
+            rejectRemark: latestTransfer.rejectRemark,
+            processingDurationMinutes: latestTransfer.processingDurationMinutes
           };
           if (latestTransfer.operatorId) {
             const op = usersStore.findById(latestTransfer.operatorId);
@@ -120,6 +125,37 @@ router.get('/waves', authMiddleware(), (req, res, next) => {
           if (latestTransfer.newUserId) {
             const nu = usersStore.findById(latestTransfer.newUserId);
             if (nu) w.lastTransfer.newUser = { id: nu.id, username: nu.username, realName: nu.realName };
+          }
+        }
+      }
+      if (w.pendingTransferId) {
+        const pendingTransfer = getActiveTransfer(w.id);
+        if (pendingTransfer) {
+          w.pendingTransfer = {
+            id: pendingTransfer.id,
+            transferRole: pendingTransfer.transferRole,
+            reason: pendingTransfer.reason,
+            remark: pendingTransfer.remark,
+            operatorId: pendingTransfer.operatorId,
+            operatorName: pendingTransfer.operatorName,
+            originalUserId: pendingTransfer.originalUserId,
+            originalUserName: pendingTransfer.originalUserName,
+            newUserId: pendingTransfer.newUserId,
+            newUserName: pendingTransfer.newUserName,
+            transferredAt: pendingTransfer.transferredAt,
+            status: pendingTransfer.status
+          };
+          if (pendingTransfer.operatorId) {
+            const op = usersStore.findById(pendingTransfer.operatorId);
+            if (op) w.pendingTransfer.operatorUser = { id: op.id, username: op.username, realName: op.realName };
+          }
+          if (pendingTransfer.originalUserId) {
+            const ou = usersStore.findById(pendingTransfer.originalUserId);
+            if (ou) w.pendingTransfer.originalUser = { id: ou.id, username: ou.username, realName: ou.realName };
+          }
+          if (pendingTransfer.newUserId) {
+            const nu = usersStore.findById(pendingTransfer.newUserId);
+            if (nu) w.pendingTransfer.newUser = { id: nu.id, username: nu.username, realName: nu.realName };
           }
         }
       }
@@ -175,7 +211,12 @@ router.get('/waves/:id', authMiddleware(), (req, res, next) => {
         newUserId: latest.newUserId,
         newUserName: latest.newUserName,
         transferredAt: latest.transferredAt,
-        waveStatusAtTransfer: latest.waveStatusAtTransfer
+        waveStatusAtTransfer: latest.waveStatusAtTransfer,
+        status: latest.status,
+        handledAt: latest.handledAt,
+        rejectReason: latest.rejectReason,
+        rejectRemark: latest.rejectRemark,
+        processingDurationMinutes: latest.processingDurationMinutes
       };
       if (latest.operatorId) {
         const op = usersStore.findById(latest.operatorId);
@@ -188,6 +229,35 @@ router.get('/waves/:id', authMiddleware(), (req, res, next) => {
       if (latest.newUserId) {
         const nu = usersStore.findById(latest.newUserId);
         if (nu) wave.lastTransfer.newUser = { id: nu.id, username: nu.username, realName: nu.realName };
+      }
+    }
+    const pendingTransfer = getActiveTransfer(wave.id);
+    if (pendingTransfer) {
+      wave.pendingTransfer = {
+        id: pendingTransfer.id,
+        transferRole: pendingTransfer.transferRole,
+        reason: pendingTransfer.reason,
+        remark: pendingTransfer.remark,
+        operatorId: pendingTransfer.operatorId,
+        operatorName: pendingTransfer.operatorName,
+        originalUserId: pendingTransfer.originalUserId,
+        originalUserName: pendingTransfer.originalUserName,
+        newUserId: pendingTransfer.newUserId,
+        newUserName: pendingTransfer.newUserName,
+        transferredAt: pendingTransfer.transferredAt,
+        status: pendingTransfer.status
+      };
+      if (pendingTransfer.operatorId) {
+        const op = usersStore.findById(pendingTransfer.operatorId);
+        if (op) wave.pendingTransfer.operatorUser = { id: op.id, username: op.username, realName: op.realName };
+      }
+      if (pendingTransfer.originalUserId) {
+        const ou = usersStore.findById(pendingTransfer.originalUserId);
+        if (ou) wave.pendingTransfer.originalUser = { id: ou.id, username: ou.username, realName: ou.realName };
+      }
+      if (pendingTransfer.newUserId) {
+        const nu = usersStore.findById(pendingTransfer.newUserId);
+        if (nu) wave.pendingTransfer.newUser = { id: nu.id, username: nu.username, realName: nu.realName };
       }
     }
     res.json({ data: wave });
@@ -573,6 +643,8 @@ router.get('/wave-transfers', authMiddleware(), (req, res, next) => {
       operatorId: req.query.operatorId,
       originalUserId: req.query.originalUserId,
       newUserId: req.query.newUserId,
+      status: req.query.status,
+      isTimeout: req.query.isTimeout,
       waveStatusAtTransfer: req.query.waveStatusAtTransfer,
       isSuspendedAtTransfer: req.query.isSuspendedAtTransfer,
       startDate: req.query.startDate,
@@ -587,6 +659,53 @@ router.get('/wave-transfers', authMiddleware(), (req, res, next) => {
     const result = getTransferList(filters, page, pageSize);
     result.data = enrichTransferWithUsers(result.data);
     res.json({ data: result.data, total: result.total, page, pageSize, totalPages: result.totalPages });
+  } catch (e) { next(e); }
+});
+
+router.get('/wave-transfers/timeouts', authMiddleware(), (req, res, next) => {
+  try {
+    const { page, pageSize } = parsePagination(req);
+    const visibleWaveIds = getUserVisibleWaveIds(req.user);
+    const filters = {
+      transferRole: req.query.transferRole,
+      newUserId: req.query.newUserId,
+      operatorId: req.query.operatorId,
+      waveNo: req.query.waveNo
+    };
+    if (req.user.role !== 'admin') {
+      filters.newUserId = req.user.id;
+    }
+    const result = getTimeoutTransferList(filters, page, pageSize);
+    if (visibleWaveIds !== null) {
+      const filtered = result.data.filter(t => visibleWaveIds.includes(t.waveId));
+      result.data = filtered;
+      result.total = filtered.length;
+    }
+    result.data = enrichTransferWithUsers(result.data);
+    res.json({ 
+      data: result.data, 
+      total: result.total, 
+      page, 
+      pageSize, 
+      totalPages: result.totalPages,
+      timeoutThreshold: result.timeoutThreshold
+    });
+  } catch (e) { next(e); }
+});
+
+router.get('/wave-transfers/stats', authMiddleware(), (req, res, next) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      transferRole: req.query.transferRole,
+      operatorId: req.query.operatorId
+    };
+    if (req.user.role !== 'admin') {
+      filters.operatorId = req.user.id;
+    }
+    const stats = getTransferStats(filters);
+    res.json({ data: stats });
   } catch (e) { next(e); }
 });
 

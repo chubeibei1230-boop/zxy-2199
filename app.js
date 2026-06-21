@@ -3,7 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { errorHandler } = require('./middleware/auth');
 const { runAllChecks } = require('./utils/detector');
-const { WAVE_STATUS, DISCREPANCY_LEVEL, ROLES, SUSPENSION_REASONS, SUSPENSION_STATUS, SUSPENDABLE_STATUSES, TRANSFER_REASONS, TRANSFERABLE_ROLES, TRANSFERABLE_STATUSES } = require('./models/constants');
+const { WAVE_STATUS, DISCREPANCY_LEVEL, ROLES, SUSPENSION_REASONS, SUSPENSION_STATUS, SUSPENDABLE_STATUSES, TRANSFER_REASONS, TRANSFER_STATUS, TRANSFER_REJECT_REASONS, TRANSFERABLE_ROLES, TRANSFERABLE_STATUSES } = require('./models/constants');
 
 const app = express();
 const PORT = 8145;
@@ -35,12 +35,14 @@ app.get('/', (req, res) => {
     waveStatuses: Object.values(WAVE_STATUS),
     discrepancyLevels: Object.values(DISCREPANCY_LEVEL),
     suspensionReasons: SUSPENSION_REASONS,
-    suspensionStatuses: Object.values(SUSPENSION_STATUS),
-    suspendableStatuses: SUSPENDABLE_STATUSES,
-    transferReasons: TRANSFER_REASONS,
-    transferableRoles: TRANSFERABLE_ROLES,
-    transferableStatuses: TRANSFERABLE_STATUSES
-  });
+      suspensionStatuses: Object.values(SUSPENSION_STATUS),
+      suspendableStatuses: SUSPENDABLE_STATUSES,
+      transferReasons: TRANSFER_REASONS,
+      transferStatuses: Object.values(TRANSFER_STATUS),
+      transferRejectReasons: TRANSFER_REJECT_REASONS,
+      transferableRoles: TRANSFERABLE_ROLES,
+      transferableStatuses: TRANSFERABLE_STATUSES
+    });
 });
 
 app.use('/api/admin', require('./routes/admin'));

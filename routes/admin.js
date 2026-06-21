@@ -4,8 +4,8 @@ const { requireAdmin, validateBody } = require('../middleware/auth');
 const { stores, newId } = require('../models');
 const { getConfig, setConfig, resolveAlert } = require('../utils/detector');
 const { suspendWave, resumeWave, getSuspensionList, getActiveSuspension, getWaveSuspensionTimeline } = require('../utils/suspension');
-const { transferWave, canTransferWave, getTransferList, enrichTransferWithUsers, getWaveTransferHistory, getLatestTransfer } = require('../utils/transfer');
-const { ROLES, CONFIG_DEFAULTS, SUSPENSION_REASONS, SUSPENSION_STATUS, TRANSFER_REASONS } = require('../models/constants');
+const { initiateTransfer, canTransferWave, getTransferList, enrichTransferWithUsers, getWaveTransferHistory, getLatestTransfer, getTransferStats, getTimeoutTransferList, getActiveTransfer } = require('../utils/transfer');
+const { ROLES, CONFIG_DEFAULTS, SUSPENSION_REASONS, SUSPENSION_STATUS, TRANSFER_REASONS, TRANSFER_STATUS, TRANSFER_REJECT_REASONS } = require('../models/constants');
 
 const parsePagination = (req) => ({
   page: Math.max(1, parseInt(req.query.page) || 1),
@@ -392,7 +392,7 @@ router.post('/waves/:id/transfer', requireAdmin, validateBody({
   try {
     const waveId = req.params.id;
     const { targetUserId, targetRole, reason, remark = '' } = req.body;
-    const result = transferWave(
+    const result = initiateTransfer(
       waveId,
       req.user.id,
       req.user.realName || req.user.username,
@@ -402,6 +402,56 @@ router.post('/waves/:id/transfer', requireAdmin, validateBody({
       remark
     );
     res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.get('/waves/:id/pending-transfer', requireAdmin, (req, res, next) => {
+  try {
+    const waveId = req.params.id;
+    const wave = stores.waves().findById(waveId);
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const pendingTransfer = getActiveTransfer(waveId);
+    if (pendingTransfer) {
+      const enriched = enrichTransferWithUsers([pendingTransfer])[0];
+      res.json({ data: enriched });
+    } else {
+      res.json({ data: null });
+    }
+  } catch (e) { next(e); }
+});
+
+router.get('/wave-transfers/stats', requireAdmin, (req, res, next) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      transferRole: req.query.transferRole,
+      operatorId: req.query.operatorId
+    };
+    const stats = getTransferStats(filters);
+    res.json({ data: stats });
+  } catch (e) { next(e); }
+});
+
+router.get('/wave-transfers/timeouts', requireAdmin, (req, res, next) => {
+  try {
+    const { page, pageSize } = parsePagination(req);
+    const filters = {
+      transferRole: req.query.transferRole,
+      newUserId: req.query.newUserId,
+      operatorId: req.query.operatorId,
+      waveNo: req.query.waveNo
+    };
+    const result = getTimeoutTransferList(filters, page, pageSize);
+    result.data = enrichTransferWithUsers(result.data);
+    res.json({ 
+      data: result.data, 
+      total: result.total, 
+      page, 
+      pageSize, 
+      totalPages: result.totalPages,
+      timeoutThreshold: result.timeoutThreshold
+    });
   } catch (e) { next(e); }
 });
 
@@ -439,6 +489,8 @@ router.get('/wave-transfers', requireAdmin, (req, res, next) => {
       originalUserId: req.query.originalUserId,
       newUserId: req.query.newUserId,
       userId: req.query.userId,
+      status: req.query.status,
+      isTimeout: req.query.isTimeout,
       waveStatusAtTransfer: req.query.waveStatusAtTransfer,
       isSuspendedAtTransfer: req.query.isSuspendedAtTransfer,
       startDate: req.query.startDate,
@@ -459,6 +511,12 @@ router.get('/wave-transfers', requireAdmin, (req, res, next) => {
         { value: 'picker', label: '拣货员' },
         { value: 'checker', label: '复核员' }
       ],
+      transferStatuses: [
+        { value: '待接收', label: '待接收' },
+        { value: '已接收', label: '已接收' },
+        { value: '已拒绝', label: '已拒绝' },
+        { value: '已超时', label: '已超时' }
+      ],
       suspendedOptions: [
         { value: 'true', label: '挂起中' },
         { value: 'false', label: '未挂起' }
@@ -472,6 +530,12 @@ router.get('/wave-transfers', requireAdmin, (req, res, next) => {
       totalPages: result.totalPages,
       availableFilters
     });
+  } catch (e) { next(e); }
+});
+
+router.get('/transfer-reject-reasons', requireAdmin, (req, res, next) => {
+  try {
+    res.json({ data: TRANSFER_REJECT_REASONS });
   } catch (e) { next(e); }
 });
 

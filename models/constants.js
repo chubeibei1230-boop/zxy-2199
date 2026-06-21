@@ -92,6 +92,21 @@ const TRANSFER_REASONS = [
   '其他'
 ];
 
+const TRANSFER_STATUS = {
+  PENDING: '待接收',
+  ACCEPTED: '已接收',
+  REJECTED: '已拒绝',
+  TIMEOUT: '已超时'
+};
+
+const TRANSFER_REJECT_REASONS = [
+  '工作量已满',
+  '技能不匹配',
+  '不熟悉该区域',
+  '有其他紧急任务',
+  '其他'
+];
+
 const TRANSFERABLE_ROLES = ['picker', 'checker'];
 
 const TRANSFERABLE_STATUSES = [
@@ -108,6 +123,7 @@ const CONFIG_DEFAULTS = {
   LOCATION_DISCREPANCY_THRESHOLD: 3,
   REVIEW_TIMEOUT_MINUTES: 120,
   SUSPENSION_TIMEOUT_MINUTES: 240,
+  TRANSFER_TIMEOUT_MINUTES: 60,
   WAVE_EFFICIENCY_BUCKETS: [
     { min: 0, max: 30, label: '<30分钟' },
     { min: 30, max: 60, label: '30-60分钟' },
@@ -130,6 +146,8 @@ module.exports = {
   SUSPENSION_STATUS,
   SUSPENDABLE_STATUSES,
   TRANSFER_REASONS,
+  TRANSFER_STATUS,
+  TRANSFER_REJECT_REASONS,
   TRANSFERABLE_ROLES,
   TRANSFERABLE_STATUSES,
   CONFIG_DEFAULTS
