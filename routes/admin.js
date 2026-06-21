@@ -440,12 +440,38 @@ router.get('/wave-transfers', requireAdmin, (req, res, next) => {
       newUserId: req.query.newUserId,
       userId: req.query.userId,
       waveStatusAtTransfer: req.query.waveStatusAtTransfer,
+      isSuspendedAtTransfer: req.query.isSuspendedAtTransfer,
       startDate: req.query.startDate,
       endDate: req.query.endDate
     };
     const result = getTransferList(filters, page, pageSize);
     result.data = enrichTransferWithUsers(result.data);
-    res.json({ data: result.data, total: result.total, page, pageSize, totalPages: result.totalPages });
+    const availableFilters = {
+      waveStatuses: [
+        { value: '待拣货', label: '待拣货' },
+        { value: '拣货中', label: '拣货中' },
+        { value: '待复核', label: '待复核' },
+        { value: '差异处理中', label: '差异处理中' },
+        { value: '可包装', label: '可包装' },
+        { value: '已关闭', label: '已关闭' }
+      ],
+      transferRoles: [
+        { value: 'picker', label: '拣货员' },
+        { value: 'checker', label: '复核员' }
+      ],
+      suspendedOptions: [
+        { value: 'true', label: '挂起中' },
+        { value: 'false', label: '未挂起' }
+      ]
+    };
+    res.json({ 
+      data: result.data, 
+      total: result.total, 
+      page, 
+      pageSize, 
+      totalPages: result.totalPages,
+      availableFilters
+    });
   } catch (e) { next(e); }
 });
 

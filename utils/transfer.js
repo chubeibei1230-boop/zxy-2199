@@ -30,7 +30,14 @@ function canTransferWave(wave, targetRole) {
       return { allowed: false, reason: '待复核、差异处理中或可包装的波次只能转派给复核员' };
     }
   }
-  return { allowed: true };
+  if (wave.isSuspended) {
+    return { 
+      allowed: true, 
+      warning: '波次当前处于挂起状态，转派后新负责人需先恢复波次才能继续操作',
+      isSuspended: true
+    };
+  }
+  return { allowed: true, isSuspended: false };
 }
 
 function transferWave(waveId, operatorId, operatorName, targetUserId, targetRole, reason, remark) {
@@ -98,7 +105,9 @@ function transferWave(waveId, operatorId, operatorName, targetUserId, targetRole
     newUserId: targetUserId,
     newUserName: targetUser.realName || targetUser.username,
     transferredAt: new Date().toISOString(),
-    waveStatusAtTransfer: wave.status
+    waveStatusAtTransfer: wave.status,
+    isSuspendedAtTransfer: wave.isSuspended === true,
+    currentSuspensionId: wave.currentSuspensionId || null
   });
 
   const updateData = {};
@@ -143,6 +152,9 @@ function getTransferList(filters = {}, page = 1, pageSize = 20) {
   }
   if (filters.waveStatusAtTransfer) {
     all = all.filter(t => t.waveStatusAtTransfer === filters.waveStatusAtTransfer);
+  }
+  if (filters.isSuspendedAtTransfer !== undefined && filters.isSuspendedAtTransfer !== null) {
+    all = all.filter(t => t.isSuspendedAtTransfer === (filters.isSuspendedAtTransfer === 'true' || filters.isSuspendedAtTransfer === true));
   }
   if (filters.startDate) {
     const sd = new Date(filters.startDate);

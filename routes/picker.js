@@ -16,6 +16,19 @@ function generateWaveNo() {
   return `W${ymd}${String(todayCount).padStart(4, '0')}`;
 }
 
+function requireWavePicker(wave, userId) {
+  if (!wave) {
+    return { allowed: false, reason: '波次不存在' };
+  }
+  if (!wave.pickerId) {
+    return { allowed: true };
+  }
+  if (wave.pickerId !== userId) {
+    return { allowed: false, reason: '该波次已转派给其他拣货员，您无权操作' };
+  }
+  return { allowed: true };
+}
+
 router.post('/waves', requireAdmin, validateBody({
   items: { required: true, type: 'array' }
 }), (req, res, next) => {
@@ -78,6 +91,8 @@ router.post('/waves/:id/start-picking', requirePicker, (req, res, next) => {
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const pickerAuth = requireWavePicker(wave, pickerId);
+    if (!pickerAuth.allowed) return res.status(403).json({ error: pickerAuth.reason });
     if (wave.isSuspended) {
       return res.status(400).json({ error: '波次已挂起，无法开始拣货，请先恢复波次' });
     }
@@ -106,10 +121,13 @@ router.post('/waves/:id/scan-location', requirePicker, validateBody({
 }), (req, res, next) => {
   try {
     const waveId = req.params.id;
+    const pickerId = req.user.id;
     const { pickItemId, scannedLocationCode, pathDeviation = false, pathDeviationReason = '' } = req.body;
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const pickerAuth = requireWavePicker(wave, pickerId);
+    if (!pickerAuth.allowed) return res.status(403).json({ error: pickerAuth.reason });
     if (wave.isSuspended) {
       return res.status(400).json({ error: '波次已挂起，无法进行拣货扫描，请先恢复波次' });
     }
@@ -161,13 +179,17 @@ router.post('/picking-records/:id/submit-qty', requirePicker, validateBody({
   actualQty: { required: true, type: 'integer', min: 0 }
 }), (req, res, next) => {
   try {
+    const pickerId = req.user.id;
     const { actualQty, stockoutReason = '', remark = '' } = req.body;
     const recordsStore = stores.pickingRecords();
     const record = recordsStore.findById(req.params.id);
     if (!record) return res.status(404).json({ error: '拣货记录不存在' });
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(record.waveId);
-    if (wave && wave.isSuspended) {
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const pickerAuth = requireWavePicker(wave, pickerId);
+    if (!pickerAuth.allowed) return res.status(403).json({ error: pickerAuth.reason });
+    if (wave.isSuspended) {
       return res.status(400).json({ error: '波次已挂起，无法提交拣货数量，请先恢复波次' });
     }
     if (record.actualQty !== null && record.actualQty !== undefined) {
@@ -205,10 +227,14 @@ router.post('/picking-records/:id/submit-qty', requirePicker, validateBody({
 
 router.put('/picking-records/:id', requirePicker, (req, res, next) => {
   try {
+    const pickerId = req.user.id;
     const record = stores.pickingRecords().findById(req.params.id);
     if (!record) return res.status(404).json({ error: '拣货记录不存在' });
     const wave = stores.waves().findById(record.waveId);
-    if (wave && wave.isSuspended) {
+    if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const pickerAuth = requireWavePicker(wave, pickerId);
+    if (!pickerAuth.allowed) return res.status(403).json({ error: pickerAuth.reason });
+    if (wave.isSuspended) {
       return res.status(400).json({ error: '波次已挂起，无法修改拣货记录，请先恢复波次' });
     }
     const updated = stores.pickingRecords().update(req.params.id, req.body);
@@ -219,9 +245,12 @@ router.put('/picking-records/:id', requirePicker, (req, res, next) => {
 router.post('/waves/:id/finish-picking', requirePicker, (req, res, next) => {
   try {
     const waveId = req.params.id;
+    const pickerId = req.user.id;
     const wavesStore = stores.waves();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
+    const pickerAuth = requireWavePicker(wave, pickerId);
+    if (!pickerAuth.allowed) return res.status(403).json({ error: pickerAuth.reason });
     if (wave.isSuspended) {
       return res.status(400).json({ error: '波次已挂起，无法完成拣货，请先恢复波次' });
     }

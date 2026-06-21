@@ -574,6 +574,7 @@ router.get('/wave-transfers', authMiddleware(), (req, res, next) => {
       originalUserId: req.query.originalUserId,
       newUserId: req.query.newUserId,
       waveStatusAtTransfer: req.query.waveStatusAtTransfer,
+      isSuspendedAtTransfer: req.query.isSuspendedAtTransfer,
       startDate: req.query.startDate,
       endDate: req.query.endDate
     };
