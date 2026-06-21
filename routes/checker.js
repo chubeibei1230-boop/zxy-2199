@@ -25,17 +25,23 @@ router.post('/waves/:id/start-checking', requireChecker, (req, res, next) => {
       return res.status(400).json({ error: `当前波次状态为 ${wave.status}，只能从待复核或差异处理中开始` });
     }
     const ratio = getConfig('REVIEW_RATIO') || 1.0;
-    const itemCount = wave.items.length;
+    const items = [...wave.items];
+    const itemCount = items.length;
     const sampleSize = Math.max(1, Math.ceil(itemCount * ratio));
-    const sampledItemIds = wave.items.slice(0, sampleSize).map(i => i.pickItemId);
+    
+    const shuffled = items.sort(() => Math.random() - 0.5);
+    const sampledItems = shuffled.slice(0, sampleSize);
+    const sampledItemIds = sampledItems.map(i => i.pickItemId);
+    
     const updated = wavesStore.update(waveId, {
       status: wave.status === WAVE_STATUS.TO_CHECK ? WAVE_STATUS.TO_CHECK : WAVE_STATUS.DISCREPANCY,
       checkerId: wave.checkerId || checkerId,
       checkingStartedAt: wave.checkingStartedAt || new Date().toISOString(),
       reviewSampleSize: sampleSize,
-      reviewSampledItemIds: sampledItemIds
+      reviewSampledItemIds: sampledItemIds,
+      reviewRatio: ratio
     });
-    res.json({ data: updated, sampleSize, sampledItemIds });
+    res.json({ data: updated, sampleSize, totalItems: itemCount, ratio, sampledItemIds });
   } catch (e) { next(e); }
 });
 
@@ -48,11 +54,29 @@ router.post('/check-records', requireChecker, validateBody({
     const { waveId, pickItemId, checkedQty, wrongItemSku = null, wrongItemReason = '',
             packingSuggestion = '', remark = '', hasWrongItem = false } = req.body;
     const wavesStore = stores.waves();
+    const checkRecordsStore = stores.checkRecords();
     const wave = wavesStore.findById(waveId);
     if (!wave) return res.status(404).json({ error: '波次不存在' });
     if (wave.status !== WAVE_STATUS.TO_CHECK && wave.status !== WAVE_STATUS.DISCREPANCY) {
       return res.status(400).json({ error: '波次不在可复核状态' });
     }
+    
+    const existing = checkRecordsStore.findOne({ waveId, pickItemId });
+    if (existing) {
+      return res.status(409).json({ 
+        error: '该拣货明细已复核，请勿重复提交',
+        existingRecordId: existing.id 
+      });
+    }
+    
+    const sampledIds = wave.reviewSampledItemIds || wave.items.map(i => i.pickItemId);
+    if (!sampledIds.includes(pickItemId)) {
+      return res.status(400).json({ 
+        error: '该拣货明细不在抽检范围内，无需复核',
+        sampledItemIds: sampledIds
+      });
+    }
+    
     const item = wave.items.find(i => i.pickItemId === pickItemId);
     if (!item) return res.status(404).json({ error: '拣货明细不存在' });
     if (hasWrongItem && !wrongItemReason) {
@@ -70,7 +94,7 @@ router.post('/check-records', requireChecker, validateBody({
     const discrepancyLevel = hasDiscrepancy
       ? (qtyDiff !== 0 ? calcDiscrepancyLevel(diffRatio) : DISCREPANCY_LEVEL.MEDIUM)
       : null;
-    const record = stores.checkRecords().create({
+    const record = checkRecordsStore.create({
       id: newId(),
       waveId,
       waveNo: wave.waveNo,
@@ -99,6 +123,15 @@ router.post('/check-records', requireChecker, validateBody({
     if (hasDiscrepancy) {
       checkLocationDiscrepancyCluster(item.locationId);
       wavesStore.update(waveId, { status: WAVE_STATUS.DISCREPANCY });
+    } else {
+      const allChecks = checkRecordsStore.find({ waveId });
+      const sampledNeedCheck = wave.reviewSampledItemIds || wave.items.map(i => i.pickItemId);
+      const completedChecks = allChecks.filter(c => sampledNeedCheck.includes(c.pickItemId));
+      const allCompleted = completedChecks.length >= sampledNeedCheck.length;
+      const allPass = allChecks.every(c => !c.hasDiscrepancy || c.discrepancyResolved);
+      if (allCompleted && allPass && wave.status === WAVE_STATUS.TO_CHECK) {
+        wavesStore.update(waveId, { status: WAVE_STATUS.TO_PACK });
+      }
     }
     res.json({ data: record });
   } catch (e) { next(e); }

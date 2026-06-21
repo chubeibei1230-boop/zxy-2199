@@ -1,1 +1,4 @@
-{"id":"9fa4d8ca83cd404e87c724cd0e5b9c04","zoneCode":"A01","zoneName":"A区一号仓","description":"电子产品仓","managerId":null,"active":true,"createdAt":"2026-06-21T04:42:09.524Z","updatedAt":"2026-06-21T04:42:09.524Z"}
+{"id":"a86865860a044b6f84aec9087ab0d186","zoneCode":"B01","zoneName":"Zone B Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:22:22.913Z","updatedAt":"2026-06-21T05:22:22.913Z"}
+{"id":"2988155adf1d40279e1a0aa4efbecbf2","zoneCode":"C01","zoneName":"Zone C Bug4 Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:24:49.587Z","updatedAt":"2026-06-21T05:24:49.587Z"}
+{"id":"4fb9a510c0ab4a43814b7ed09ec2d8d9","zoneCode":"D01","zoneName":"Zone D Bug4 Final Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:26:15.298Z","updatedAt":"2026-06-21T05:26:15.298Z"}
+{"id":"9f25789ae8184324b4c2538bfebf829d","zoneCode":"E01","zoneName":"Zone E Final Test","description":"","managerId":null,"active":true,"createdAt":"2026-06-21T05:26:57.262Z","updatedAt":"2026-06-21T05:26:57.262Z"}

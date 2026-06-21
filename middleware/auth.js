@@ -11,10 +11,31 @@ function authMiddleware(...allowedRoles) {
     if (!Object.values(ROLES).includes(userRole)) {
       return res.status(401).json({ error: '无效的角色类型' });
     }
+    
+    const isFirstUserBootstrap = 
+      req.method === 'POST' && 
+      (req.path === '/users' || req.originalUrl.endsWith('/api/admin/users')) && 
+      stores.users().count() === 0;
+    
+    if (isFirstUserBootstrap) {
+      req.user = { id: userId, role: userRole, isBootstrap: true };
+      return next();
+    }
+    
+    const user = stores.users().findById(userId);
+    if (!user) {
+      return res.status(401).json({ error: '用户不存在，请检查 X-User-Id' });
+    }
+    if (!user.active) {
+      return res.status(401).json({ error: '用户已被禁用' });
+    }
+    if (user.role !== userRole) {
+      return res.status(401).json({ error: `用户角色不匹配，该用户实际角色为 ${user.role}` });
+    }
     if (allowedRoles.length > 0 && !allowedRoles.includes(userRole)) {
       return res.status(403).json({ error: '权限不足，不允许访问该接口' });
     }
-    req.user = { id: userId, role: userRole };
+    req.user = { id: userId, role: userRole, username: user.username, realName: user.realName };
     next();
   };
 }
